@@ -120,6 +120,7 @@ python tools/rtl_guard.py . --watch   # پایش پیوسته در حین نوش
 
 نسخهٔ کامل با هفت زیربند: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-rtl-law.md).
 برای هارنس‌هایی که HTML را حذف می‌کنند (ZCode و امثالش): [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md).
+برای اعمال یک‌جا در همهٔ پروژه‌ها، قانون را در فایل دستورِ سطح کاربر بگذارید: [prompt/global-agents-md.md](prompt/global-agents-md.md).
 پرامپت کامل با لحن و قالب پاسخ: [prompt/system-prompt.md](prompt/system-prompt.md).
 مرجع هارنس‌ها و دستور آزمون هارنس تازه: [docs/harnesses.md](docs/harnesses.md).
 

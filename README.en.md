@@ -96,6 +96,7 @@ Inline Latin strings go into code spans or `<span dir="ltr">`.
 
 Full version with seven sub-rules: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-rtl-law.md).
 For harnesses that strip raw HTML (ZCode and friends): [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md).
+To apply once for every project, put the same rule in the user-scope instruction file (`~/.zcode/AGENTS.md` in ZCode): [prompt/global-agents-md.md](prompt/global-agents-md.md).
 
 ## Environment support
 
