@@ -41,47 +41,67 @@ DEFAULT_ASAR = Path(r"C:\Program Files\ZCode\resources\app.asar")
 PATCHED_SUFFIX = ".rtl-patched"
 BACKUP_SUFFIX = ".pre-rtl-backup"
 CSS_MARKER = "harness-rtl-kit: content-adaptive RTL"
+CSS_V2_MARKER = "harness-rtl-kit: content-adaptive RTL for chat markdown (v2"
 
 CSS = """
-/* === harness-rtl-kit: content-adaptive RTL for chat markdown (re-runnable patch) ===
-   Per-block base direction follows the first strong character (unicode-bidi:plaintext):
-   Persian blocks render right-to-left with right alignment, Latin blocks stay LTR.
-   Scope: Streamdown markdown roots only (chat messages), so app chrome is untouched. */
+/* === harness-rtl-kit: content-adaptive RTL for chat markdown (v2, re-runnable patch) ===
+   v2: no dependency on Streamdown root classes (tailwind-merge may drop them).
+   1) Every text block gets unicode-bidi:plaintext — first-strong base direction:
+      Persian renders RTL/right-aligned, English stays LTR. Safe app-wide.
+   2) Chat markdown lists/tables mirror via their stable data-streamdown attributes.
+   3) Blockquotes mirror via data-markdown-blockquote.
+   4) Code always stays LTR. */
 
-.space-y-4.whitespace-normal:has(> [data-streamdown]) p,
-.space-y-4.whitespace-normal:has(> [data-streamdown]) blockquote,
-.space-y-4.whitespace-normal:has(> [data-streamdown]) li,
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown^="heading-"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="blockquote"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="list-item"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="table-cell"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="table-header-cell"] {
+p, li, td, th, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, summary, figcaption {
   unicode-bidi: plaintext;
   text-align: start;
 }
 
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="ordered-list"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="unordered-list"] {
+[data-streamdown="unordered-list"],
+[data-streamdown="ordered-list"],
+[data-streamdown="table"] {
   direction: rtl;
 }
 
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="table"] {
-  direction: rtl;
+[data-streamdown="unordered-list"] {
+  padding-left: 0 !important;
+  padding-right: 1.25rem !important;
 }
 
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="code-block"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="code-block-body"],
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="code-block"] code,
-.space-y-4.whitespace-normal:has(> [data-streamdown]) [data-streamdown="inline-code"] {
+[data-streamdown="list-item"] {
+  padding-left: 0;
+  padding-right: 0.25rem;
+}
+
+blockquote[data-markdown-blockquote] {
+  border-left-width: 0 !important;
+  border-right-width: 2px !important;
+  padding-left: 0 !important;
+  padding-right: 0.75rem !important;
+}
+
+pre, code,
+[data-streamdown="code-block"],
+[data-streamdown="code-block-body"],
+[data-streamdown="inline-code"] {
   direction: ltr;
-  unicode-bidi: isolate;
   text-align: left;
 }
-/* === end harness-rtl-kit RTL patch === */
+/* === end harness-rtl-kit RTL patch (v2) === */
 """
+
+import re as _re
+
+BLOCK_RE = _re.compile(
+    r"\n?/\* === harness-rtl-kit:.*?/\* === end harness-rtl-kit RTL patch(?: \(v2\))? === \*/\n?",
+    _re.S,
+)
 
 
 def run(cmd: list[str]) -> None:
+    import os
+    if os.name == "nt" and cmd and cmd[0] == "npx":
+        cmd = ["cmd", "/c"] + cmd  # npx در ویندوز شیم .cmd است
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         sys.stderr.write(result.stdout + result.stderr)
@@ -89,15 +109,16 @@ def run(cmd: list[str]) -> None:
 
 
 def inject_css(app_dir: Path) -> list[str]:
-    """CSS را به همهٔ استایل‌های اصلی رندرر می‌افزاید؛ خودتوان است."""
+    """CSS را در استایل‌های رندرر می‌نشاند؛ بلاک پیشین حذف و v2 جایگزین می‌شود."""
     touched: list[str] = []
     for css in sorted((app_dir / "out" / "renderer" / "assets").glob("styles-*.css")):
         text = css.read_text(encoding="utf-8")
-        if CSS_MARKER in text:
-            touched.append(f"از پیش پچ‌شده: {css.name}")
+        if CSS_V2_MARKER in text:
+            touched.append(f"از پیش v2: {css.name}")
             continue
-        css.write_text(text + CSS, encoding="utf-8")
-        touched.append(f"پچ شد: {css.name}")
+        text = BLOCK_RE.sub("\n", text)  # حذف بلاک قدیمی اگر باشد
+        css.write_text(text.rstrip() + "\n" + CSS, encoding="utf-8")
+        touched.append(f"پچ شد (v2): {css.name}")
     if not touched:
         raise SystemExit("هیچ فایل استایل styles-*.css پیدا نشد؛ ساختار رندرر عوض شده است.")
     return touched
