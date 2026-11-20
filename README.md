@@ -89,6 +89,7 @@ python tools/rtl_view.py notes.md              # تبدیل به HTML و باز 
 python tools/rtl_view.py --clipboard           # همان کار روی محتوای کلیپ‌بورد
 python tools/rtl_guard.py . --write       # بسته‌بندی خودکار همهٔ فایل‌های فارسی
 python tools/rtl_isolate.py notes.md --in-place   # ایزوله‌سازی فارسی با RLI/PDI — برای هارنس بدون HTML
+python tools/zcode_rtl_css_patch.py --prepare  # پچ CSS راست‌چین برای خودِ ZCode (چیدمان صفحه: بولت راست، متن راست‌تراز)
 ```
 
 ### ۴) لوح راست‌چین

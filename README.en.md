@@ -32,6 +32,7 @@ Right-aligning the text (`text-align: right`) does not fix it. Only the base dir
 | `prompt/autoclaw-rtl-law.md` | A drop-in rule block for `CLAUDE.md` / `AGENTS.md` so an agent always wraps its replies |
 | `prompt/zcode-rtl-law.md` | The character-level rule block for harnesses that strip raw HTML (ZCode / Streamdown) |
 | `tools/rtl_isolate.py` | Wraps every Persian block in RLI/PDI bidi isolates; checks compliance, undoes |
+| `tools/zcode_rtl_css_patch.py` | CSS patch for the ZCode app itself: per-block first-strong direction (Persian right-aligned, code stays LTR); backup and restore included |
 | `tools/rtl_wrap.py` | Wraps a document in the RTL container, checks compliance, strips invisible bidi marks |
 | `tools/rtl_lint.py` | Pre-flight check: missing wrapper, missing blank line, inline Latin inside Persian sentences |
 | `tools/rtl_view.py` | Renders a file (or the clipboard) to a self-contained RTL HTML page |
