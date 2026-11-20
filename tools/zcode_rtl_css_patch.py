@@ -108,6 +108,110 @@ def run(cmd: list[str]) -> None:
         raise SystemExit(f"فرمان ناموفق: {' '.join(cmd)}")
 
 
+JS = """/* harness-rtl-kit v3 — renderer-side bidi normalizer
+   Strips bidi isolates/marks from chat text blocks whose true first-strong
+   direction is RTL (they then render RTL under the patched CSS), keeps
+   isolates inside Latin-first blocks (they protect Persian there), and wraps
+   Persian runs inside code blocks so comments stay readable in LTR code. */
+(function () {
+  "use strict";
+  var ISO_RE = /[\\u2066-\\u2069\\u200e\\u200f]/g;
+  var RTL_RE = /[\\u0590-\\u05FF\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/;
+  var LTR_RE = /[A-Za-z\\u00C0-\\u024F\\u0370-\\u04FF]/;
+  var BLOCK_SEL = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,dt,dd";
+  var CODE_SEL = '[data-streamdown="code-block"],[data-streamdown="inline-code"],pre,code';
+  var RUN_RE = /[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF][\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF\\u200c \\t0-9\\u060C\\u061B\\u061F.,:()%-]*[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]|[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
+
+  function firstStrong(text) {
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      if (RTL_RE.test(ch)) return "R";
+      if (LTR_RE.test(ch)) return "L";
+    }
+    return "L";
+  }
+  function inCode(el) { return !!(el.closest && el.closest(CODE_SEL)); }
+  function textNodes(el) {
+    var out = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null), n;
+    while ((n = w.nextNode())) out.push(n);
+    return out;
+  }
+  function stripIsolates(el) {
+    textNodes(el).forEach(function (n) {
+      if (ISO_RE.test(n.data)) n.data = n.data.replace(ISO_RE, "");
+    });
+  }
+  function isolatePersianRuns(el) {
+    textNodes(el).forEach(function (n) {
+      if (!RTL_RE.test(n.data) || n.data.indexOf("\\u2067") !== -1) return;
+      n.data = n.data.replace(RUN_RE, function (m) { return "\\u2067" + m + "\\u2069"; });
+    });
+  }
+  function process(root) {
+    try {
+      var blocks = root.querySelectorAll ? root.querySelectorAll(BLOCK_SEL) : [];
+      if (root.matches && root.matches(BLOCK_SEL)) {
+        blocks = [root].concat(Array.prototype.slice.call(blocks));
+      }
+      Array.prototype.forEach.call(blocks, function (el) {
+        if (inCode(el)) return;
+        var text = el.textContent || "";
+        if (!RTL_RE.test(text)) return;
+        if (firstStrong(text.replace(ISO_RE, "")) === "R") stripIsolates(el);
+      });
+      var codes = root.querySelectorAll ? root.querySelectorAll(CODE_SEL) : [];
+      if (root.matches && root.matches(CODE_SEL)) {
+        codes = [root].concat(Array.prototype.slice.call(codes));
+      }
+      Array.prototype.forEach.call(codes, isolatePersianRuns);
+    } catch (e) { /* never break the app */ }
+  }
+  var pending = false;
+  function schedule() {
+    if (pending) return;
+    pending = true;
+    setTimeout(function () { pending = false; process(document.body); }, 100);
+  }
+  function start() {
+    try {
+      new MutationObserver(schedule).observe(document.body, {
+        childList: true, subtree: true, characterData: true
+      });
+    } catch (e) { /* ignore */ }
+    schedule();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start);
+  } else {
+    start();
+  }
+})();
+"""
+
+SCRIPT_TAG = '<script src="./assets/rtl-harness-kit.js"></script>'
+
+
+def inject_js(app_dir: Path) -> list[str]:
+    """نرمال‌ایزر رندرر را به‌صورت فایل + ارجاع در index.html می‌نشاند؛ خودتوان."""
+    touched: list[str] = []
+    assets = app_dir / "out" / "renderer" / "assets"
+    js_file = assets / "rtl-harness-kit.js"
+    js_file.write_text(JS, encoding="utf-8")
+    touched.append(f"نوشته شد: {js_file.name}")
+
+    index = app_dir / "out" / "renderer" / "index.html"
+    html = index.read_text(encoding="utf-8")
+    if "rtl-harness-kit.js" not in html:
+        if "</body>" not in html:
+            raise SystemExit("ساختار index.html تغییر کرده؛ نقطهٔ تزریق پیدا نشد.")
+        html = html.replace("</body>", f"{SCRIPT_TAG}\n</body>")
+        index.write_text(html, encoding="utf-8")
+        touched.append("تزریق شد: ارجاع اسکریپت در index.html")
+    else:
+        touched.append("ارجاع اسکریپت از قبل در index.html هست")
+    return touched
+
+
 def inject_css(app_dir: Path) -> list[str]:
     """CSS را در استایل‌های رندرر می‌نشاند؛ بلاک پیشین حذف و v2 جایگزین می‌شود."""
     touched: list[str] = []
@@ -148,6 +252,8 @@ def prepare(asar: Path) -> int:
         work = Path(tmp) / "app"
         run(["npx", "--yes", "asar", "extract", str(asar), str(work)])
         for line in inject_css(work):
+            print(line)
+        for line in inject_js(work):
             print(line)
         patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
         run(["npx", "--yes", "asar", "pack", str(work), str(patched)])
