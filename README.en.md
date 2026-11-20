@@ -1,17 +1,17 @@
-# AutoClaw RTL Kit
+# Harness RTL Kit
 
 **Persian (Farsi) text that reads correctly in chat UIs, markdown and the terminal.**
 
-[![Stars](https://img.shields.io/github/stars/armanpoor/autoclaw-rtl-kit?style=flat-square&label=%E2%98%85)](https://github.com/armanpoor/autoclaw-rtl-kit/stargazers)
-[![rtl-check](https://github.com/armanpoor/autoclaw-rtl-kit/actions/workflows/rtl-check.yml/badge.svg)](https://github.com/armanpoor/autoclaw-rtl-kit/actions/workflows/rtl-check.yml)
-[![License](https://img.shields.io/github/license/armanpoor/autoclaw-rtl-kit?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/armanpoor/harness-rtl-kit?style=flat-square&label=%E2%98%85)](https://github.com/armanpoor/harness-rtl-kit/stargazers)
+[![rtl-check](https://github.com/armanpoor/harness-rtl-kit/actions/workflows/rtl-check.yml/badge.svg)](https://github.com/armanpoor/harness-rtl-kit/actions/workflows/rtl-check.yml)
+[![License](https://img.shields.io/github/license/armanpoor/harness-rtl-kit?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 
 [فارسی](README.md) · [English](README.en.md)
 
-<img src="assets/social-preview.png" alt="AutoClaw RTL Kit — scrambled versus correctly shaped Persian text" width="100%">
+<img src="assets/social-preview.png" alt="Harness RTL Kit — scrambled versus correctly shaped Persian text" width="100%">
 
-**Live demo:** [https://armanpoor.github.io/autoclaw-rtl-kit/](https://armanpoor.github.io/autoclaw-rtl-kit/) — paste Persian text and see it fixed.
+**Live demo:** [https://armanpoor.github.io/harness-rtl-kit/](https://armanpoor.github.io/harness-rtl-kit/) — paste Persian text and see it fixed.
 ---
 
 ## The problem
@@ -30,6 +30,8 @@ Right-aligning the text (`text-align: right`) does not fix it. Only the base dir
 | Piece | What it does |
 |---|---|
 | `prompt/autoclaw-rtl-law.md` | A drop-in rule block for `CLAUDE.md` / `AGENTS.md` so an agent always wraps its replies |
+| `prompt/zcode-rtl-law.md` | The character-level rule block for harnesses that strip raw HTML (ZCode / Streamdown) |
+| `tools/rtl_isolate.py` | Wraps every Persian block in RLI/PDI bidi isolates; checks compliance, undoes |
 | `tools/rtl_wrap.py` | Wraps a document in the RTL container, checks compliance, strips invisible bidi marks |
 | `tools/rtl_lint.py` | Pre-flight check: missing wrapper, missing blank line, inline Latin inside Persian sentences |
 | `tools/rtl_view.py` | Renders a file (or the clipboard) to a self-contained RTL HTML page |
@@ -40,8 +42,8 @@ Right-aligning the text (`text-align: right`) does not fix it. Only the base dir
 ## Quick start
 
 ```bash
-git clone https://github.com/armanpoor/autoclaw-rtl-kit.git
-cd autoclaw-rtl-kit
+git clone https://github.com/armanpoor/harness-rtl-kit.git
+cd harness-rtl-kit
 python tools/rtl_lint.py --selftest
 ```
 
@@ -58,6 +60,18 @@ Your message
 ```
 
 Opening tag on its own line, then a **blank line**, the body, a blank line, and the closing tag. The blank line matters: without it the body is treated as raw HTML and your markdown formatting is lost.
+
+## Character-level fix for HTML-stripping harnesses
+
+Some renderers count HTML tags as plain text — ZCode chat uses Streamdown, which converts every raw HTML node to text. The wrapper then shows up literally. For these, wrap every Persian block in a Unicode bidi isolate pair, RLI (U+2067) … PDI (U+2069), which lives inside the text itself and survives any sanitiser:
+
+```markdown
+## ⁧Persian heading⁩
+
+⁧Persian reply with latin words and parentheses (AFR)⁩
+```
+
+Drop-in rules: [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md). Bulk tool: `python tools/rtl_isolate.py notes.md --in-place`. The per-harness matrix and a four-variant test you can run against any new harness: [docs/harnesses.md](docs/harnesses.md).
 
 ## Markdown files inside harnesses
 
@@ -81,12 +95,14 @@ Inline Latin strings go into code spans or `<span dir="ltr">`.
 ```
 
 Full version with seven sub-rules: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-rtl-law.md).
+For harnesses that strip raw HTML (ZCode and friends): [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md).
 
 ## Environment support
 
 | Environment | Native RTL | Fix |
 |---|---|---|
 | AutoClaw chat | right-aligned only | the `dir="rtl"` wrapper |
+| ZCode chat (Streamdown renderer) | strips raw HTML to plain text | RLI/PDI bidi isolates |
 | GitHub (markdown, issues, comments) | supported since 2021 | [changelog](https://github.blog/changelog/2021-11-16-right-to-left-language-support/) |
 | VS Code markdown preview | none | [Persian RTL Markdown Preview](https://marketplace.visualstudio.com/items?itemName=sinatabar.persian-rtl-markdown-preview) or BidiMD |
 | Windows Terminal | none ([open issue](https://github.com/microsoft/terminal/issues/538)) | don't read Persian in a terminal — render to HTML |
@@ -96,6 +112,8 @@ Full version with seven sub-rules: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-
 
 **Why do parentheses flip?** They are neutral characters; their placement follows the paragraph base direction.
 
+**How do I fix Persian in ZCode?** ZCode renders markdown with Streamdown and strips raw HTML, so the `div` wrapper shows up as text. Wrap every Persian block in an RLI/PDI pair — rules in [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md); the four-variant test for a new harness is in [docs/harnesses.md](docs/harnesses.md).
+
 **Isn't RLM enough?** No. A leading RLM only sets the paragraph's first strong character, and it disappears across line breaks. Use RLI/PDI pairs or CSS isolation for inline runs.
 
 **Does it work on macOS and Linux?** Yes. Only `--clipboard` is Windows-specific.
@@ -104,6 +122,7 @@ Full version with seven sub-rules: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-
 
 ## Docs
 
+- [Harness matrix](docs/harnesses.md)
 - [Why text breaks](docs/why-it-breaks.md)
 - [Editor and platform setup](docs/editor-setup.md)
 - [Troubleshooting](docs/troubleshooting.md)

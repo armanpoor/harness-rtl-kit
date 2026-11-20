@@ -73,7 +73,7 @@ def test_lint_flags_missing_blank_line() -> None:
 
 
 def test_prompt_files_exist() -> None:
-    for name in ("autoclaw-rtl-law.md", "system-prompt.md", "reply-template.md"):
+    for name in ("autoclaw-rtl-law.md", "zcode-rtl-law.md", "system-prompt.md", "reply-template.md"):
         assert (ROOT / "prompt" / name).is_file(), f"قطعهٔ آماده نیست: {name}"
 
 

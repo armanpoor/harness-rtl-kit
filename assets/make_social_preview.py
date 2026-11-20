@@ -82,7 +82,7 @@ def main() -> int:
 
     right = WIDTH - 72
 
-    rtl_text(draw, right, 92, "کیت راست‌چین AutoClaw", bold_56, INK)
+    rtl_text(draw, right, 92, "کیت راست‌چین هارنس‌ها", bold_56, INK)
     rtl_text(draw, right, 180, "نمایش درست فارسی در پیام‌ها،", regular_26, MUTED)
     rtl_text(draw, right, 222, "مارک‌داون و ترمینال", regular_26, MUTED)
 
@@ -107,7 +107,7 @@ def main() -> int:
           "پس: پایهٔ جهت راست، جمله یکدست")
 
     # پانویس
-    rtl_text(draw, right, HEIGHT - 96, "github.com/armanpoor/autoclaw-rtl-kit", regular_22, ACCENT)
+    rtl_text(draw, right, HEIGHT - 96, "github.com/armanpoor/harness-rtl-kit", regular_22, ACCENT)
     rtl_text(draw, right, HEIGHT - 58, "پرامپت‌های آماده • سه ابزار بدون وابستگی • مجوز MIT", regular_22, MUTED)
 
     out = HERE / "social-preview.png"

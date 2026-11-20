@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         پیش از ثبت، بخش عیب‌یابی مستندات را ببینید:
-        https://github.com/armanpoor/autoclaw-rtl-kit/blob/main/docs/troubleshooting.md
+        https://github.com/armanpoor/harness-rtl-kit/blob/main/docs/troubleshooting.md
   - type: textarea
     id: what-happened
     attributes:

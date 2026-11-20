@@ -1,20 +1,20 @@
 <div dir="rtl" align="right">
 
-# کیت راست‌چین AutoClaw
+# کیت راست‌چین هارنس‌ها
 
 **نمایش درست فارسی در پیام‌ها، مارک‌داون و ابزارهای خط فرمان.**
 
-[![Stars](https://img.shields.io/github/stars/armanpoor/autoclaw-rtl-kit?style=flat-square&label=%E2%98%85)](https://github.com/armanpoor/autoclaw-rtl-kit/stargazers)
-[![rtl-check](https://github.com/armanpoor/autoclaw-rtl-kit/actions/workflows/rtl-check.yml/badge.svg)](https://github.com/armanpoor/autoclaw-rtl-kit/actions/workflows/rtl-check.yml)
-[![License](https://img.shields.io/github/license/armanpoor/autoclaw-rtl-kit?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/armanpoor/harness-rtl-kit?style=flat-square&label=%E2%98%85)](https://github.com/armanpoor/harness-rtl-kit/stargazers)
+[![rtl-check](https://github.com/armanpoor/harness-rtl-kit/actions/workflows/rtl-check.yml/badge.svg)](https://github.com/armanpoor/harness-rtl-kit/actions/workflows/rtl-check.yml)
+[![License](https://img.shields.io/github/license/armanpoor/harness-rtl-kit?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![RTL](https://img.shields.io/badge/RTL-%D8%B1%D8%A7%D8%B3%D8%AA%E2%80%8C%DA%86%DB%8C%D9%86-0f5c8c?style=flat-square)](docs/why-it-breaks.md)
 
 [فارسی](README.md) · [English](README.en.md)
 
-<img src="assets/social-preview.png" alt="کیت راست‌چین AutoClaw — مقایسهٔ متن به‌هم‌ریخته و متن درست" width="100%">
+<img src="assets/social-preview.png" alt="کیت راست‌چین هارنس‌ها — مقایسهٔ متن به‌هم‌ریخته و متن درست" width="100%">
 
-**دموی زنده:** [https://armanpoor.github.io/autoclaw-rtl-kit/](https://armanpoor.github.io/autoclaw-rtl-kit/) — متن فارسی را بچسبانید و درست ببینید.
+**دموی زنده:** [https://armanpoor.github.io/harness-rtl-kit/](https://armanpoor.github.io/harness-rtl-kit/) — متن فارسی را بچسبانید و درست ببینید.
 ---
 
 ## مشکل چیست؟
@@ -40,8 +40,8 @@
 ## شروع سریع
 
 ```bash
-git clone https://github.com/armanpoor/autoclaw-rtl-kit.git
-cd autoclaw-rtl-kit
+git clone https://github.com/armanpoor/harness-rtl-kit.git
+cd harness-rtl-kit
 python tools/rtl_lint.py --selftest
 ```
 
@@ -49,7 +49,7 @@ python tools/rtl_lint.py --selftest
 
 ## راه‌حل
 
-سه لایه، از سبک‌ترین به کامل‌ترین:
+روش‌ها، از سبک‌ترین به کامل‌ترین:
 
 ### ۱) قاعدهٔ بدون نصب
 
@@ -67,7 +67,19 @@ python tools/rtl_lint.py --selftest
 
 قاعدهٔ آماده برای فایل دستورهای عامل: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-rtl-law.md).
 
-### ۲) ابزار خط فرمان
+### ۲) قاعدهٔ نویسهٔ کنترلی — برای هارنس‌هایی که HTML را حذف می‌کنند
+
+بعضی رندرکننده‌ها — مثل ZCode با رندرر Streamdown — تگ HTML را نویزهٔ متن می‌شمارند؛ بستهٔ بالا نه‌تنها اثر نمی‌کند، خودش به‌صورت متن خام دیده می‌شود. برای این‌ها جفت نویسهٔ کنترلی یونیکد به کار می‌رود که داخل خود متن زندگی می‌کند و از هر پاکسازی عبور می‌کند:
+
+```markdown
+## ⁧تیتر فارسی⁩
+
+⁧متن پاسخ با واژهٔ latin و پرانتز (AFR)⁩
+```
+
+RLI (U+2067) آغاز هر بلوک فارسی است و PDI (U+2069) پایانش؛ هر دو نامرئی‌اند. قاعدهٔ آماده: [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md) — ابزار گروهی: `python tools/rtl_isolate.py notes.md --in-place`.
+
+### ۳) ابزار خط فرمان
 
 ```bash
 python tools/rtl_wrap.py notes.md --in-place   # پیچیدن فایل در بستهٔ راست‌چین
@@ -76,13 +88,14 @@ python tools/rtl_lint.py draft.md              # بازرسی پیش از ارس
 python tools/rtl_view.py notes.md              # تبدیل به HTML و باز کردن در مرورگر
 python tools/rtl_view.py --clipboard           # همان کار روی محتوای کلیپ‌بورد
 python tools/rtl_guard.py . --write       # بسته‌بندی خودکار همهٔ فایل‌های فارسی
+python tools/rtl_isolate.py notes.md --in-place   # ایزوله‌سازی فارسی با RLI/PDI — برای هارنس بدون HTML
 ```
 
-### ۳) لوح راست‌چین
+### ۴) لوح راست‌چین
 
 فایل [tools/rtl_paddle.html](tools/rtl_paddle.html) را باز کنید: متن را در ستون چپ بچسبانید، ستون راست همان لحظه درست نشان می‌دهد. برای وقتی است که متنِ به‌هم‌ریخته را از جایی کپی کرده‌اید و فقط می‌خواهید بخوانیدش.
 
-### ۴) پیش‌نمایش فایل‌ها در هارنس‌ها
+### ۵) پیش‌نمایش فایل‌ها در هارنس‌ها
 
 تگ جهت‌دار داخل خود فایل، همراه فایل سفر می‌کند. اگر فایل مارک‌داون بسته‌بندی شده باشد، هر پیش‌نمایشی که مارک‌داون را رندر کند — AutoClaw، VS Code، گیت‌هاب، آبسیدین — آن را راست‌چین نشان می‌دهد. نگهبان، این کار را خودکار می‌کند:
 
@@ -106,13 +119,16 @@ python tools/rtl_guard.py . --watch   # پایش پیوسته در حین نوش
 ```
 
 نسخهٔ کامل با هفت زیربند: [prompt/autoclaw-rtl-law.md](prompt/autoclaw-rtl-law.md).
+برای هارنس‌هایی که HTML را حذف می‌کنند (ZCode و امثالش): [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md).
 پرامپت کامل با لحن و قالب پاسخ: [prompt/system-prompt.md](prompt/system-prompt.md).
+مرجع هارنس‌ها و دستور آزمون هارنس تازه: [docs/harnesses.md](docs/harnesses.md).
 
 ## چه محیط‌هایی درست می‌شوند
 
 | محیط | وضعیت بومی | راه‌حل این کیت |
 |---|---|---|
 | AutoClaw (پنجرهٔ گفت‌وگو) | تراز راست بدون پایهٔ جهت | بستهٔ `dir="rtl"` — همین کیت |
+| ZCode (رندرر Streamdown) | تگ HTML حذف و به‌صورت متن دیده می‌شود | جفت RLI/PDI — همین کیت |
 | GitHub (فایل مارک‌داون، ایشو، کامنت) | پشتیبانی بومی از سال ۲۰۲۱ | [changelog](https://github.blog/changelog/2021-11-16-right-to-left-language-support/) |
 | VS Code (پیش‌نمایش مارک‌داون) | بدون پشتیبانی | افزونهٔ [Persian RTL Markdown Preview](https://marketplace.visualstudio.com/items?itemName=sinatabar.persian-rtl-markdown-preview) یا BidiMD |
 | ترمینال ویندوز | پشتیبانی ندارد | [ایشوی باز](https://github.com/microsoft/terminal/issues/538) — خروجی فارسی را در ترمینال نخوانید |
@@ -125,6 +141,9 @@ python tools/rtl_guard.py . --watch   # پایش پیوسته در حین نوش
 
 **چطور متن فارسی را در AutoClaw راست‌چین کنم؟**
 هر پاسخ را داخل `<div dir="rtl">` بگذارید، با یک سطر خالی بعد از تگ آغاز. اگر فایل دستور عامل دارید، همان قاعده را یک‌بار در آن بنویسید تا همیشه اعمال شود.
+
+**چطور متن فارسی را در ZCode راست‌چین کنم؟**
+ZCode با Streamdown رندر می‌کند و تگ‌های HTML را حذف می‌کند؛ بستهٔ `div` آنجا کار نمی‌کند و به‌صورت متن دیده می‌شود. هر بلوک فارسی را با جفت نویسهٔ کنترلی RLI و PDI بسته کنید — قانون آماده در [prompt/zcode-rtl-law.md](prompt/zcode-rtl-law.md). برای آزمون هر هارنس تازه، [دستور آزمون چهارسو](docs/harnesses.md) را ببینید.
 
 **چرا پرانتزها در متن فارسی برعکس می‌شوند؟**
 پرانتز نویسهٔ خنثی است. تا وقتی پایهٔ جهت پاراگراف راست نشود، مرورگر جای باز و بستهٔ آن را از پایهٔ چپ‌به‌راست می‌گیرد.
@@ -146,6 +165,7 @@ python tools/rtl_guard.py . --watch   # پایش پیوسته در حین نوش
 
 ## مستندات
 
+- [مرجع هارنس‌ها](docs/harnesses.md) — جدول محیط‌ها و دستور آزمون چهارسو برای هر هارنس تازه
 - [چرا متن به‌هم می‌ریزد](docs/why-it-breaks.md) — الگوریتم دوجهته با ارجاع به استاندارد
 - [راه‌اندازی ادیتور و محیط‌ها](docs/editor-setup.md)
 - [عیب‌یابی](docs/troubleshooting.md)
@@ -168,9 +188,9 @@ Issue و Pull Request خوش‌آمد است. پیش از ارسال، `python t
 
 ## کلیدواژه‌ها
 
-فارسی: راست‌چین، متن فارسی، به‌هم‌ریختن متن، پرانتز برعکس، ترمینال ویندوز، مارک‌داون فارسی، دستیار فارسی، ریمپ ایسیو.
+فارسی: راست‌چین، متن فارسی، به‌هم‌ریختن متن، پرانتز برعکس، ترمینال ویندوز، مارک‌داون فارسی، دستیار فارسی، هارنس، ایزولهٔ دوجهته، راست‌چین کردن خروجی عامل.
 
-انگلیسی: RTL, right-to-left, Persian, Farsi, Arabic script, bidirectional text, Unicode bidi, UAX #9, markdown RTL, chat UI, AI agent prompts, Windows Terminal, VS Code, Obsidian.
+انگلیسی: RTL, right-to-left, Persian, Farsi, Arabic script, bidirectional text, Unicode bidi, UAX #9, markdown RTL, chat UI, AI agent prompts, harness, RLI, PDI, bidi isolate, ZCode, Streamdown, AutoClaw, Windows Terminal, VS Code, Obsidian.
 
 ## مجوز
 
