@@ -125,6 +125,7 @@ To apply once for every project, put the same rule in the user-scope instruction
 ## Docs
 
 - [Harness matrix](docs/harnesses.md)
+- [ZCode case study](docs/case-study-zcode.md) — the full journey from zero to the final fix, with a lesson per step
 - [Why text breaks](docs/why-it-breaks.md)
 - [Editor and platform setup](docs/editor-setup.md)
 - [Troubleshooting](docs/troubleshooting.md)
