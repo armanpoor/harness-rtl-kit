@@ -108,29 +108,45 @@ def run(cmd: list[str]) -> None:
         raise SystemExit(f"فرمان ناموفق: {' '.join(cmd)}")
 
 
-JS = """/* harness-rtl-kit v3 — renderer-side bidi normalizer
-   Strips bidi isolates/marks from chat text blocks whose true first-strong
-   direction is RTL (they then render RTL under the patched CSS), keeps
-   isolates inside Latin-first blocks (they protect Persian there), and wraps
-   Persian runs inside code blocks so comments stay readable in LTR code. */
+JS = """/* harness-rtl-kit v4 — renderer-side bidi normalizer
+   v3 behavior kept: strips bidi isolates/marks from RTL chat blocks and wraps
+   Persian runs inside code blocks.
+   v4 — majority-direction policy (fixes the "sometimes it falls apart" class):
+   1) RTL-majority blocks: when Arabic-script strong chars outnumber Latin ones
+      (>=3 Arabic chars), the block is forced RTL (dir=rtl + inline
+      unicode-bidi:normal, overriding the plaintext CSS). A Persian sentence led
+      by a Latin chip ("G0 — چک سلامت نود VPN — پروب را اجرا می‌کنم …") now reads
+      correctly right-to-left instead of rendering its body as a mirrored box.
+   2) LTR-majority blocks (mostly-English lines with some Persian): bare Persian
+      runs are auto-wrapped in ⁧…⁩ (the treatment code blocks already had), so
+      unwrapped Persian inside Latin-led lines can no longer scramble.
+   3) Coverage widened: pure text leaves outside p/li/h* (sidebar titles,
+      collapsed message previews, buttons, labels) are normalized too, guarded
+      against code/input/contenteditable and against flex/grid containers. */
 (function () {
   "use strict";
-  var ISO_RE = /[\\u2066-\\u2069\\u200e\\u200f]/g;
+  var ISO_RE = /[\\u202A-\\u202E\\u2066-\\u2069\\u200e\\u200f]/g;
+  var ISO_TEST_RE = /[\\u202A-\\u202E\\u2066-\\u2069\\u200e\\u200f]/;
+  var HAS_ISO_RE = /[\\u202A-\\u202E\\u2066-\\u2069]/;
   var RTL_RE = /[\\u0590-\\u05FF\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/;
   var LTR_RE = /[A-Za-z\\u00C0-\\u024F\\u0370-\\u04FF]/;
-  var BLOCK_SEL = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,dt,dd";
+  var BLOCK_SEL = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,dt,dd,summary,figcaption";
   var CODE_SEL = '[data-streamdown="code-block"],[data-streamdown="inline-code"],pre,code';
+  var GUARD_SEL = CODE_SEL + ',input,textarea,select,[contenteditable="true"],[contenteditable=""]';
+  var INLINE_OK = /^(span|strong|em|b|i|a|code|small|mark|sub|sup|u|s|abbr|time)$/i;
+  var SKIP_TAG = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEXTAREA: 1, TEMPLATE: 1 };
   var RUN_RE = /[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF][\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF\\u200c \\t0-9\\u060C\\u061B\\u061F.,:()%-]*[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]|[\\u0600-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/g;
 
-  function firstStrong(text) {
-    for (var i = 0; i < text.length; i++) {
-      var ch = text.charAt(i);
-      if (RTL_RE.test(ch)) return "R";
-      if (LTR_RE.test(ch)) return "L";
+  function counts(text) {
+    var ar = 0, la = 0, i, ch;
+    for (i = 0; i < text.length; i++) {
+      ch = text.charAt(i);
+      if (RTL_RE.test(ch)) ar++;
+      else if (LTR_RE.test(ch)) la++;
     }
-    return "L";
+    return { ar: ar, la: la };
   }
-  function inCode(el) { return !!(el.closest && el.closest(CODE_SEL)); }
+  function inCode(el) { return !!(el.closest && el.closest(GUARD_SEL)); }
   function textNodes(el) {
     var out = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null), n;
     while ((n = w.nextNode())) out.push(n);
@@ -138,14 +154,56 @@ JS = """/* harness-rtl-kit v3 — renderer-side bidi normalizer
   }
   function stripIsolates(el) {
     textNodes(el).forEach(function (n) {
-      if (ISO_RE.test(n.data)) n.data = n.data.replace(ISO_RE, "");
+      if (!n.parentElement || SKIP_TAG[n.parentElement.tagName]) return;
+      if (ISO_TEST_RE.test(n.data)) n.data = n.data.replace(ISO_RE, "");
     });
   }
   function isolatePersianRuns(el) {
     textNodes(el).forEach(function (n) {
-      if (!RTL_RE.test(n.data) || n.data.indexOf("\\u2067") !== -1) return;
+      if (!n.parentElement || SKIP_TAG[n.parentElement.tagName]) return;
+      if (!RTL_RE.test(n.data) || HAS_ISO_RE.test(n.data)) return;
       n.data = n.data.replace(RUN_RE, function (m) { return "\\u2067" + m + "\\u2069"; });
     });
+  }
+  function displayOf(el) {
+    try { return getComputedStyle(el).display; } catch (e) { return ""; }
+  }
+  function isSafeForDir(el) {
+    // Direction is only forced on block-ish elements: never on bare inline
+    // (their block ancestor carries it) and never on flex/grid containers
+    // (direction mirrors flex/grid child layout).
+    var disp = displayOf(el);
+    if (disp === "inline" || disp === "flex" || disp === "inline-flex" ||
+        disp === "grid" || disp === "inline-grid" || disp === "none") return false;
+    for (var i = 0; i < el.children.length; i++) {
+      if (!INLINE_OK.test(el.children[i].tagName)) return false;
+    }
+    return true;
+  }
+  function normalize(el) {
+    if (!el || !el.tagName || SKIP_TAG[el.tagName] || inCode(el)) return;
+    var raw = el.textContent || "";
+    if (!RTL_RE.test(raw)) return;
+    var c = counts(raw.replace(ISO_RE, ""));
+    if (c.ar === 0) return;
+    if (c.ar > c.la && c.ar >= 3 && isSafeForDir(el)) {
+      el.setAttribute("dir", "rtl");
+      el.style.unicodeBidi = "normal";
+      stripIsolates(el);
+    } else if (c.la >= c.ar && isSafeForDir(el)) {
+      // Latin-led line with some Persian: protect each Persian run so the
+      // bidi algorithm cannot reorder fragments (same treatment as code).
+      isolatePersianRuns(el);
+    }
+  }
+  function nearestBlockish(el) {
+    while (el && el !== document.body) {
+      if (SKIP_TAG[el.tagName]) return null;
+      if (el.matches && el.matches(BLOCK_SEL)) return null; // blocks pass owns it
+      if (displayOf(el) !== "inline") return el;
+      el = el.parentElement;
+    }
+    return null;
   }
   function process(root) {
     try {
@@ -153,12 +211,22 @@ JS = """/* harness-rtl-kit v3 — renderer-side bidi normalizer
       if (root.matches && root.matches(BLOCK_SEL)) {
         blocks = [root].concat(Array.prototype.slice.call(blocks));
       }
-      Array.prototype.forEach.call(blocks, function (el) {
-        if (inCode(el)) return;
-        var text = el.textContent || "";
-        if (!RTL_RE.test(text)) return;
-        if (firstStrong(text.replace(ISO_RE, "")) === "R") stripIsolates(el);
-      });
+      Array.prototype.forEach.call(blocks, normalize);
+      // Text leaves outside the standard blocks (sidebar titles, collapsed
+      // previews, buttons): climb from each text node to the nearest
+      // block-ish ancestor and normalize that, deduped per pass.
+      try {
+        var seen = typeof WeakSet === "function" ? new WeakSet() : null;
+        var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null), n;
+        while ((n = w.nextNode())) {
+          var tEl = n.parentElement;
+          if (!tEl || SKIP_TAG[tEl.tagName]) continue;
+          var pEl = nearestBlockish(tEl);
+          if (!pEl || (seen && seen.has(pEl))) continue;
+          if (seen) seen.add(pEl);
+          normalize(pEl);
+        }
+      } catch (e2) { /* ignore */ }
       var codes = root.querySelectorAll ? root.querySelectorAll(CODE_SEL) : [];
       if (root.matches && root.matches(CODE_SEL)) {
         codes = [root].concat(Array.prototype.slice.call(codes));
