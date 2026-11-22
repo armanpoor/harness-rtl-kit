@@ -50,11 +50,12 @@ import time
 from pathlib import Path
 
 # خروجی فارسی روی کنسول/لولهٔ ویندوز: کدپیج ANSI هرگز نباید print را بشکند
-# (مثلاً در اجرای زمان‌بندی‌شده که stdout به فایل لاگ می‌رود)
+# (مثلاً در اجرای زمان‌بندی‌شده که stdout به فایل لاگ می‌رود)؛ line_buffering
+# برای این است که لاگِ واچرِ در حال انتظار زنده دیده شود، نه در لحظهٔ خروج
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 DEFAULT_ASAR = Path(r"C:\Program Files\ZCode\resources\app.asar")
 PATCHED_SUFFIX = ".rtl-patched"
