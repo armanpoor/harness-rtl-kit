@@ -414,7 +414,7 @@ def ensure_backup(asar: Path, backup: Path) -> bool:
     return True
 
 
-def apply(asar: Path, force: bool = False) -> int:
+def apply(asar: Path, force: bool = False, retries: int = 0, retry_pause: float = 2.0) -> int:
     patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
     backup = asar.with_suffix(asar.suffix + BACKUP_SUFFIX)
     if not patched.is_file():
@@ -428,29 +428,51 @@ def apply(asar: Path, force: bool = False) -> int:
         print("هشدار: ZCode باز است (--force)؛ اگر فایل قفل باشد تعویض شکست می‌خورد.")
     if not is_patched(asar):
         ensure_backup(asar, backup)
-    try:
-        patched.replace(asar)
-    except OSError as exc:
-        raise SystemExit(
-            "تعویض asar ناموفق بود؛ فایل در حال استفاده است:\n"
-            f"    {exc}\n"
-            "ZCode را کامل ببندید و دوباره تلاش کنید (یا --apply-when-closed)."
-        )
+    attempt = 0
+    while True:
+        try:
+            patched.replace(asar)
+            break
+        except OSError as exc:
+            attempt += 1
+            if attempt > retries:
+                raise SystemExit(
+                    "تعویض asar ناموفق بود؛ فایل در حال استفاده است:\n"
+                    f"    {exc}\n"
+                    "ZCode را کامل ببندید و دوباره تلاش کنید (یا --apply-when-closed)."
+                ) from exc
+            print(f"فایل قفل بود (تلاش {attempt} از {retries})؛ "
+                  f"{retry_pause:.0f} ثانیه بعد دوباره ...")
+            time.sleep(retry_pause)
     print(f"پچ اعمال شد: {asar}")
     print("حالا ZCode را روشن کنید.")
     return 0
 
 
 def apply_when_closed(asar: Path, relaunch: bool, poll_seconds: int) -> int:
-    """واچر: بعد از بسته‌شدن ZCode پچ را اعمال می‌کند؛ کاربرد پس از آپدیت خودکار اپ."""
+    """واچر: بعد از بسته‌شدن ZCode پچ را اعمال می‌کند؛ کاربرد پس از آپدیت خودکار اپ.
+
+    درست همان لحظهٔ بسته‌شدن، خروجِ اپ یا بازشدنِ دوبارهٔ سریعِ آن می‌تواند
+    فایل را چند ثانیه‌ای دوباره قفل کند؛ به‌جای تسلیم‌شدن، تلاش مجدد می‌کنیم
+    و اگر اپ واقعاً دوباره باز شده باشد، به حلقهٔ انتظار برمی‌گردیم.
+    """
     patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
     if not patched.is_file():
         raise SystemExit("asar پچ‌شده پیدا نشد؛ اول --prepare را اجرا کنید.")
     print(f"منتظر بسته‌شدن ZCode (بررسی هر {poll_seconds} ثانیه)؛ این فرایند را باز نگه دارید ...")
-    while app_running():
-        time.sleep(poll_seconds)
-    print("ZCode بسته شد؛ اعمال پچ ...")
-    code = apply(asar, force=True)  # اپ بسته شده؛ دوباره بررسیِ اجرا لازم نیست
+    while True:
+        while app_running():
+            time.sleep(poll_seconds)
+        print("ZCode بسته شد؛ اعمال پچ ...")
+        try:
+            code = apply(asar, force=True, retries=30, retry_pause=2.0)
+        except SystemExit as exc:
+            if app_running():
+                # بین کشفِ بسته‌شدن و تعویض، اپ دوباره باز شده؛ تسلیم نه، انتظار
+                print("اپ دوباره باز شده و فایل را قفل کرده؛ پچ اعمال نشد — دوباره به انتظار می‌روم ...")
+                continue
+            raise
+        break
     if relaunch and code == 0:
         exe = asar.parent.parent / "ZCode.exe"
         if exe.is_file():
@@ -496,6 +518,12 @@ def main() -> int:
         help="فاصلهٔ بررسی در --apply-when-closed (ثانیه، پیش‌فرض ۱۵)",
     )
     parser.add_argument("--force", action="store_true", help="apply حتی با ZCode باز")
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="تعداد تلاش مجدد تعویض در صورت قفل‌بودن فایل (پیش‌فرض ۳؛ واچر ۳۰)",
+    )
     parser.add_argument("--restore", action="store_true", help="بازگردانی پشتیبان (ZCode بسته باشد)")
     parser.add_argument("--status", action="store_true", help="گزارش وضعیت")
     args = parser.parse_args()
@@ -509,7 +537,7 @@ def main() -> int:
     if args.prepare:
         return prepare(asar)
     if args.apply:
-        return apply(asar, force=args.force)
+        return apply(asar, force=args.force, retries=args.retries)
     if args.apply_when_closed:
         return apply_when_closed(asar, relaunch=args.relaunch, poll_seconds=args.poll_interval)
     if args.restore:

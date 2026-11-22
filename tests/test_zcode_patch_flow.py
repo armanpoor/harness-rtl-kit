@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -158,6 +159,35 @@ try:
           sha(ASAR) == clean_v2_sha and MARKER not in ASAR.read_bytes())
     run(["--restore", "--force"])
     check("restore is repeatable", sha(ASAR) == clean_v2_sha)
+
+    # --- فاز ۹: قفلِ گذرا روی فایل → تعویض باید با تلاش مجدد موفق شود ---
+    # (بازسازی سناریوی واقعی ۲۰۲۶-۱۱-۲۳: در فاصلهٔ خروج اپ، فایل چند ثانیه‌ای
+    #  دوباره قفل شد و واچرِ بدون retry تسلیم شد)
+    locker_src = WORK / "locker.py"
+    locker_src.write_text(
+        "import ctypes, sys, time\n"
+        "path, seconds = sys.argv[1], float(sys.argv[2])\n"
+        "GENERIC_READ, OPEN_EXISTING, FILE_SHARE_READ = 0x80000000, 3, 1\n"
+        "h = ctypes.windll.kernel32.CreateFileW(path, GENERIC_READ, FILE_SHARE_READ,"
+        " None, OPEN_EXISTING, 0, None)\n"
+        "time.sleep(seconds)\n"
+        "ctypes.windll.kernel32.CloseHandle(h)\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        run(["--prepare"])
+        locker = subprocess.Popen(
+            [sys.executable, "-I", str(locker_src), str(ASAR), "6"],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        time.sleep(1.5)  # قفل جا بیفتد
+        run(["--apply", "--force", "--retries", "10"])
+        locker.wait()
+        check("apply succeeds after transient lock released (retry path)",
+              MARKER in ASAR.read_bytes())
+    else:
+        print("SKIP: phase 9 needs Windows (real file lock via CreateFileW)")
+    locker_src.unlink(missing_ok=True)
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 
