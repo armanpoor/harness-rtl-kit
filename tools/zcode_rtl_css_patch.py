@@ -16,15 +16,24 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
     --prepare   استخراج app.asar، تزریق CSS، پک به app.asar.rtl-patched
                 (در حین اجرای ZCode هم بی‌خطر است؛ فایل اصلی دست نمی‌خورد)
     --apply     تعویض پچ‌شده با اصلی + نگه‌داری پشتیبان (ZCode باید بسته باشد)
+    --apply-when-closed   منتظر می‌ماند ZCode بسته شود، بعد apply می‌کند؛
+                برای خودکارسازی پس از آپدیت خودکار اپ (با --relaunch اپ
+                بلافاصله دوباره باز می‌شود)
     --restore   بازگرداندن پشتیبان (ZCode باید بسته باشد)
-    --status    گزارش وضعیت فایل‌ها
+    --status    گزارش وضعیت فایل‌ها (شامل پچ‌بودن یا نبودن asar فعلی)
+    --force     apply حتی با ZCode باز (اگر سیستم‌عامل فایل را قفل کرده
+                باشد با پیام روشن شکست می‌خورد)
 
 پیش‌نیاز: Node.js در مسیر (ابزار `npx asar` صدا زده می‌شود). پس از هر
 به‌روزرسانی خودکار ZCode، پچ پاک می‌شود و باید دوباره اجرا شود.
+(`--apply` هنگام تعویض، اگر نسخهٔ اصلیِ بی‌پچِ تازه‌تر از پشتیبانِ موجود
+باشد — یعنی اپ آپدیت شده — پشتیبان را پیش از تعویض تازه‌سازی می‌کند تا
+--restore هیچ‌وقت اپ را به نسخهٔ کهنه برگرداند.)
 
 استفاده:
     python tools/zcode_rtl_css_patch.py --prepare
     python tools/zcode_rtl_css_patch.py --apply
+    python tools/zcode_rtl_css_patch.py --apply-when-closed --relaunch
     python tools/zcode_rtl_css_patch.py --restore
     python tools/zcode_rtl_css_patch.py --status
 """
@@ -32,10 +41,20 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+# خروجی فارسی روی کنسول/لولهٔ ویندوز: کدپیج ANSI هرگز نباید print را بشکند
+# (مثلاً در اجرای زمان‌بندی‌شده که stdout به فایل لاگ می‌رود)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 DEFAULT_ASAR = Path(r"C:\Program Files\ZCode\resources\app.asar")
 PATCHED_SUFFIX = ".rtl-patched"
@@ -97,6 +116,35 @@ BLOCK_RE = _re.compile(
     _re.S,
 )
 
+CHUNK = 8 * 1024 * 1024  # اسکن نشانِ پچ در asar چندصد-مگابایتی، تکه‌تکه
+
+
+def is_patched(asar: Path) -> bool:
+    """آیا asar فعلی نشان پچ را دارد؟ (بدون استخراج، با اسکن بایتی)"""
+    needle = CSS_V2_MARKER.encode("utf-8")
+    with asar.open("rb") as fh:
+        tail = b""
+        while True:
+            block = fh.read(CHUNK)
+            if not block:
+                return False
+            if needle in tail + block:
+                return True
+            tail = block[-len(needle):]
+
+
+def file_sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            block = fh.read(CHUNK)
+            if not block:
+                break
+            h.update(block)
+    return h.hexdigest()
+
 
 def run(cmd: list[str]) -> None:
     import os
@@ -122,7 +170,11 @@ JS = """/* harness-rtl-kit v4 — renderer-side bidi normalizer
       unwrapped Persian inside Latin-led lines can no longer scramble.
    3) Coverage widened: pure text leaves outside p/li/h* (sidebar titles,
       collapsed message previews, buttons, labels) are normalized too, guarded
-      against code/input/contenteditable and against flex/grid containers. */
+      against code/input/contenteditable and against flex/grid containers.
+   Re-verified on ZCode 3.19.1 / Electron 44.7.0 (2026-11-22): data-streamdown
+   list/table attributes are still emitted; code blocks render as plain <pre>
+   (covered by pre,code); the data-streamdown="code-block"/"inline-code"
+   selectors are kept for older builds and stay harmless. */
 (function () {
   "use strict";
   var ISO_RE = /[\\u202A-\\u202E\\u2066-\\u2069\\u200e\\u200f]/g;
@@ -307,8 +359,17 @@ def status(asar: Path) -> int:
     patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
     backup = asar.with_suffix(asar.suffix + BACKUP_SUFFIX)
     print(f"asar اصلی:    {asar} {'[موجود]' if asar.is_file() else '[نیست]'}")
+    if asar.is_file():
+        state = "پچ‌شده (v2)" if is_patched(asar) else "بدون پچ (مثلاً پس از آپدیت خودکار اپ)"
+        print(f"وضعیت asar اصلی: {state}")
     print(f"asar پچ‌شده:  {patched} {'[موجود]' if patched.is_file() else '[نیست]'}")
     print(f"پشتیبان:      {backup} {'[موجود]' if backup.is_file() else '[نیست]'}")
+    if asar.is_file() and backup.is_file():
+        same = (
+            asar.stat().st_size == backup.stat().st_size
+            and file_sha256(asar) == file_sha256(backup)
+        )
+        print(f"پشتیبان هم‌اندازهٔ asar اصلی: {'بله' if same else 'نه (اپ آپدیت شده)'}")
     print(f"ZCode در حال اجراست: {'بله' if app_running() else 'نه'}")
     return 0
 
@@ -326,33 +387,88 @@ def prepare(asar: Path) -> int:
         patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
         run(["npx", "--yes", "asar", "pack", str(work), str(patched)])
     print(f"پک شد: {patched}")
-    print("برای اعمال: ZCode را ببندید و --apply را اجرا کنید (یا باتِ دسکتاپ را بزنید).")
+    print("برای اعمال: ZCode را ببندید و --apply را اجرا کنید،")
+    print("یا همین حالا --apply-when-closed --relaunch را به‌صورت پس‌زمینه راه بیندازید.")
     return 0
 
 
-def apply(asar: Path) -> int:
+def ensure_backup(asar: Path, backup: Path) -> bool:
+    """پشتیبانِ نسخهٔ اصلیِ بی‌پچ را تازه نگه می‌دارد. True یعنی پشتیبان تازه نوشته شد.
+
+    پشتیبان با «کپی اتمیک» ساخته می‌شود نه move — اگر تعویض بعدی به‌خاطر
+    قفلِ فایل شکست بخورد، asar اصلی باید سر جای خودش باشد.
+    """
+    if backup.is_file():
+        if (
+            asar.stat().st_size == backup.stat().st_size
+            and file_sha256(asar) == file_sha256(backup)
+        ):
+            return False
+        print("پشتیبانِ موجود با نسخهٔ اصلی فعلی فرق دارد (اپ آپدیت شده)؛ تازه‌سازی پشتیبان ...")
+    else:
+        print("پشتیبان‌گیری از asar اصلی ...")
+    tmp = backup.with_name(backup.name + ".tmp")
+    shutil.copyfile(asar, tmp)
+    os.replace(tmp, backup)
+    return True
+
+
+def apply(asar: Path, force: bool = False) -> int:
     patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
     backup = asar.with_suffix(asar.suffix + BACKUP_SUFFIX)
-    if app_running():
-        raise SystemExit("ZCode باز است؛ اول ببندیدش و بعد دوباره اجرا کنید.")
     if not patched.is_file():
         raise SystemExit("asar پچ‌شده پیدا نشد؛ اول --prepare را اجرا کنید.")
-    if not backup.is_file():
-        print("پشتیبان‌گیری از asar اصلی ...")
-        asar.replace(backup)
-    patched.replace(asar)
+    if app_running():
+        if not force:
+            raise SystemExit(
+                "ZCode باز است؛ اول ببندیدش و بعد دوباره اجرا کنید "
+                "(یا از --apply-when-closed استفاده کنید)."
+            )
+        print("هشدار: ZCode باز است (--force)؛ اگر فایل قفل باشد تعویض شکست می‌خورد.")
+    if not is_patched(asar):
+        ensure_backup(asar, backup)
+    try:
+        patched.replace(asar)
+    except OSError as exc:
+        raise SystemExit(
+            "تعویض asar ناموفق بود؛ فایل در حال استفاده است:\n"
+            f"    {exc}\n"
+            "ZCode را کامل ببندید و دوباره تلاش کنید (یا --apply-when-closed)."
+        )
     print(f"پچ اعمال شد: {asar}")
     print("حالا ZCode را روشن کنید.")
     return 0
 
 
-def restore(asar: Path) -> int:
+def apply_when_closed(asar: Path, relaunch: bool, poll_seconds: int) -> int:
+    """واچر: بعد از بسته‌شدن ZCode پچ را اعمال می‌کند؛ کاربرد پس از آپدیت خودکار اپ."""
+    patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
+    if not patched.is_file():
+        raise SystemExit("asar پچ‌شده پیدا نشد؛ اول --prepare را اجرا کنید.")
+    print(f"منتظر بسته‌شدن ZCode (بررسی هر {poll_seconds} ثانیه)؛ این فرایند را باز نگه دارید ...")
+    while app_running():
+        time.sleep(poll_seconds)
+    print("ZCode بسته شد؛ اعمال پچ ...")
+    code = apply(asar, force=True)  # اپ بسته شده؛ دوباره بررسیِ اجرا لازم نیست
+    if relaunch and code == 0:
+        exe = asar.parent.parent / "ZCode.exe"
+        if exe.is_file():
+            os.startfile(str(exe))  # جدا از این فرایند باز می‌شود
+            print(f"ZCode دوباره باز شد: {exe}")
+        else:
+            print(f"ZCode.exe در مسیر متعارف نبود؛ دستی باز کنید: {exe}")
+    return code
+
+
+def restore(asar: Path, force: bool = False) -> int:
     backup = asar.with_suffix(asar.suffix + BACKUP_SUFFIX)
-    if app_running():
+    if app_running() and not force:
         raise SystemExit("ZCode باز است؛ اول ببندیدش و بعد دوباره اجرا کنید.")
     if not backup.is_file():
         raise SystemExit("پشتیبانی نیست؛ چیزی برای بازگردانی نیست.")
-    backup.replace(asar)
+    tmp = backup.with_name(backup.name + ".tmp")
+    shutil.copyfile(backup, tmp)
+    os.replace(tmp, asar)  # پشتیبان حذف نمی‌شود؛ restore قابل تکرار است
     print(f"نسخهٔ اصلی بازگشت: {asar}")
     return 0
 
@@ -362,6 +478,23 @@ def main() -> int:
     parser.add_argument("--asar", default=str(DEFAULT_ASAR), help="مسیر app.asar")
     parser.add_argument("--prepare", action="store_true", help="ساخت asar پچ‌شده (بی‌خطر در حین اجرا)")
     parser.add_argument("--apply", action="store_true", help="تعویض پچ‌شده با اصلی (ZCode بسته باشد)")
+    parser.add_argument(
+        "--apply-when-closed",
+        action="store_true",
+        help="منتظر بسته‌شدن ZCode می‌ماند و بعد apply می‌کند",
+    )
+    parser.add_argument(
+        "--relaunch",
+        action="store_true",
+        help="بعد از --apply-when-closed، اپ را دوباره باز می‌کند",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=15,
+        help="فاصلهٔ بررسی در --apply-when-closed (ثانیه، پیش‌فرض ۱۵)",
+    )
+    parser.add_argument("--force", action="store_true", help="apply حتی با ZCode باز")
     parser.add_argument("--restore", action="store_true", help="بازگردانی پشتیبان (ZCode بسته باشد)")
     parser.add_argument("--status", action="store_true", help="گزارش وضعیت")
     args = parser.parse_args()
@@ -375,9 +508,11 @@ def main() -> int:
     if args.prepare:
         return prepare(asar)
     if args.apply:
-        return apply(asar)
+        return apply(asar, force=args.force)
+    if args.apply_when_closed:
+        return apply_when_closed(asar, relaunch=args.relaunch, poll_seconds=args.poll_interval)
     if args.restore:
-        return restore(asar)
+        return restore(asar, force=args.force)
     parser.print_help()
     return 0
 
