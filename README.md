@@ -90,7 +90,7 @@ python tools/rtl_view.py --clipboard           # همان کار روی محتو
 python tools/rtl_guard.py . --write       # بسته‌بندی خودکار همهٔ فایل‌های فارسی
 python tools/rtl_isolate.py notes.md --in-place   # ایزوله‌سازی فارسی با RLI/PDI — برای هارنس بدون HTML
 python tools/zcode_rtl_css_patch.py --prepare  # پچ راست‌چین خودِ ZCode (چیدمان: بولت راست، متن راست‌تراز)
-python tools/zcode_rtl_css_patch.py --apply-when-closed --relaunch  # پس از بستن اپ اعمال و اپ دوباره باز می‌شود
+python tools/zcode_rtl_css_patch.py --install-task  # یک‌بار: پس از هر آپدیت اپ، ترمیم پچ کاملاً خودکار می‌شود
 ```
 
 ### ۴) لوح راست‌چین

@@ -19,6 +19,13 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
     --apply-when-closed   منتظر می‌ماند ZCode بسته شود، بعد apply می‌کند؛
                 برای خودکارسازی پس از آپدیت خودکار اپ (با --relaunch اپ
                 بلافاصله دوباره باز می‌شود)
+    --doctor    حالت «دکتر» برای زمان‌بندی دوره‌ای: اگر asar پچ‌شده است کاری
+                نمی‌کند؛ اگر آپدیتِ اپ پچ را پاک کرده، خودش prepare می‌کند و
+                در نخستین بستنِ اپ اعمال و اپ را دوباره باز می‌کند. با
+                --install-task یک‌بار نصب کنید تا همیشه خودکار باشد.
+    --install-task   ساخت زمان‌بندی ویندوز برای اجرای دوره‌ای --doctor
+                (هر ۱۵ دقیقه، بدون پنجره، با pythonw)
+    --remove-task    حذف همان زمان‌بندی
     --restore   بازگرداندن پشتیبان (ZCode باید بسته باشد)
     --status    گزارش وضعیت فایل‌ها (شامل پچ‌بودن یا نبودن asar فعلی)
     --force     apply حتی با ZCode باز (اگر سیستم‌عامل فایل را قفل کرده
@@ -34,6 +41,8 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
     python tools/zcode_rtl_css_patch.py --prepare
     python tools/zcode_rtl_css_patch.py --apply
     python tools/zcode_rtl_css_patch.py --apply-when-closed --relaunch
+    python tools/zcode_rtl_css_patch.py --install-task   # یک‌بار؛ برای همیشه خودکار
+    python tools/zcode_rtl_css_patch.py --doctor         # همان کاری که زمان‌بندی می‌کند
     python tools/zcode_rtl_css_patch.py --restore
     python tools/zcode_rtl_css_patch.py --status
 """
@@ -60,6 +69,10 @@ if hasattr(sys.stderr, "reconfigure"):
 DEFAULT_ASAR = Path(r"C:\Program Files\ZCode\resources\app.asar")
 PATCHED_SUFFIX = ".rtl-patched"
 BACKUP_SUFFIX = ".pre-rtl-backup"
+DOCTOR_LOCK_SUFFIX = ".doctor-lock"
+DOCTOR_LOCK_MAX_AGE = 2 * 3600  # قفلِ بی‌صاحبِ کهنه‌تر از این = به‌جامانده از کرش
+TASK_NAME = "HarnessRTLKit-Doctor"
+DEFAULT_LOG = Path.home() / ".harness-rtl-kit" / "rtl-doctor.log"
 CSS_MARKER = "harness-rtl-kit: content-adaptive RTL"
 CSS_V2_MARKER = "harness-rtl-kit: content-adaptive RTL for chat markdown (v2"
 
@@ -153,7 +166,8 @@ def run(cmd: list[str]) -> None:
         cmd = ["cmd", "/c"] + cmd  # npx در ویندوز شیم .cmd است
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(result.stdout + result.stderr)
+        if sys.stderr is not None:  # در pythonw استانداردِ خطا نیست
+            sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"فرمان ناموفق: {' '.join(cmd)}")
 
 
@@ -483,6 +497,126 @@ def apply_when_closed(asar: Path, relaunch: bool, poll_seconds: int) -> int:
     return code
 
 
+def _doctor_log(msg: str, log_path: Path | None) -> None:
+    line = time.strftime("%Y-%m-%d %H:%M:%S") + "  " + msg
+    print(line)  # در pythonw بی‌اثر است؛ لاگِ فایل نقش را می‌برد
+    if log_path is not None:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except OSError:
+            pass
+
+
+def _relaunch_zcode(asar: Path, log) -> None:
+    exe = asar.parent.parent / "ZCode.exe"
+    if exe.is_file():
+        os.startfile(str(exe))  # جدا از این فرایند باز می‌شود
+        log(f"ZCode دوباره باز شد: {exe}")
+    else:
+        log(f"ZCode.exe در مسیر متعارف نبود؛ دستی باز کنید: {exe}")
+
+
+def doctor(asar: Path, log_path: Path | None, force: bool = False,
+           poll_seconds: int = 10) -> int:
+    """حالت «دکتر» برای زمان‌بندی دوره‌ای — چرخهٔ آپدیت اپ را خودکار می‌بندد.
+
+    هر تیک: اگر asar پچ‌شده است، بی‌کار خارج می‌شود. اگر آپدیت خودکار اپ پچ را
+    پاک کرده باشد: prepare می‌کند (در حین اجرای اپ امن است)، اگر اپ باز است
+    منتظر نخستین بستن می‌ماند و همان‌جا apply و بازگشایی می‌کند. قفلِ فایل،
+    نمونه‌های موازی را یکی می‌کند و قفلِ به‌جا مانده از کرش بعد از دو ساعت
+    کهنه می‌شود.
+    """
+    def log(msg: str) -> None:
+        _doctor_log(msg, log_path)
+
+    patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
+    lock = asar.with_suffix(asar.suffix + DOCTOR_LOCK_SUFFIX)
+    got_lock = False
+    for attempt in (1, 2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            got_lock = True
+            break
+        except FileExistsError:
+            if time.time() - lock.stat().st_mtime < DOCTOR_LOCK_MAX_AGE:
+                log("نمونهٔ دیگری از دکتر در جریان است؛ خروج.")
+                return 0
+            log("قفلِ کهنه و بی‌صاحب پاک شد؛ ادامه.")
+            lock.unlink(missing_ok=True)
+    if not got_lock:
+        log("قفلِ doctor آزاد نشد؛ خروج.")
+        return 1
+
+    try:
+        if is_patched(asar):
+            log("asar از قبل پچ‌شده است؛ کاری نیست.")
+            return 0
+        # اگر آپدیت‌کننده همین لحظه در حال نوشتن asar باشد، به تیک بعدی می‌سپاریم
+        size_before = asar.stat().st_size
+        time.sleep(3)
+        if asar.stat().st_size != size_before:
+            log("asar در حال تغییر است (آپدیت در جریان)؛ تیک بعدی بررسی می‌کند.")
+            return 0
+        if not patched.is_file() or patched.stat().st_mtime < asar.stat().st_mtime:
+            log("asar بی‌پچ است (آپدیت اپ پچ را پاک کرده)؛ ساخت نسخهٔ پچ‌شده ...")
+            prepare(asar)
+        if not is_patched(patched):
+            # فایل ناقص (مثلاً pack نیمه‌کاره پس از قطع فرایند): بازسازی
+            log("فایل پچ‌شده نشان پچ را ندارد؛ حذف و ساخت دوباره ...")
+            patched.unlink(missing_ok=True)
+            prepare(asar)
+            if not is_patched(patched):
+                log("خطا: دوباره بدون نشان؛ تیک بعدی دوباره تلاش می‌کند.")
+                return 1
+        if app_running() and not force:
+            log(f"ZCode باز است؛ منتظر نخستین بستن (بررسی هر {poll_seconds} ثانیه) ...")
+            while True:
+                time.sleep(poll_seconds)
+                if not app_running():
+                    break
+            log("ZCode بسته شد؛ اعمال پچ ...")
+        code = apply(asar, force=True, retries=30)
+        if code == 0:
+            log("پچ اعمال شد.")
+            _relaunch_zcode(asar, log)
+        else:
+            log("اعمال پچ ناموفق بود؛ تیک بعدی دوباره تلاش می‌کند.")
+        return code
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def install_task(log_path: Path) -> int:
+    """زمان‌بندی ویندوز: اجرای دوره‌ای --doctor با pythonw، بدون پنجره."""
+    if os.name != "nt":
+        raise SystemExit("زمان‌بندی فقط روی ویندوز است؛ در بقیهٔ سیستم‌ها cron بچینید.")
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw.is_file():
+        pythonw = Path(sys.executable)
+    script = Path(__file__).resolve()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    parts = [pythonw, script, "--doctor", "--log", log_path]
+    tr = " ".join(f'"{p}"' if " " in str(p) else str(p) for p in parts)
+    run(["schtasks", "/create", "/tn", TASK_NAME, "/tr", tr,
+         "/sc", "minute", "/mo", "15", "/f"])
+    print(f"زمان‌بندی «{TASK_NAME}» ساخته شد: هر ۱۵ دقیقه (بی‌پنجره، با pythonw).")
+    print(f"حذف: python \"{script}\" --remove-task")
+    print(f"لاگ دکتر: {log_path}")
+    return 0
+
+
+def remove_task() -> int:
+    if os.name != "nt":
+        raise SystemExit("زمان‌بندی فقط روی ویندوز است.")
+    run(["schtasks", "/delete", "/tn", TASK_NAME, "/f"])
+    print(f"زمان‌بندی «{TASK_NAME}» حذف شد.")
+    return 0
+
+
 def restore(asar: Path, force: bool = False) -> int:
     backup = asar.with_suffix(asar.suffix + BACKUP_SUFFIX)
     if app_running() and not force:
@@ -524,6 +658,22 @@ def main() -> int:
         default=3,
         help="تعداد تلاش مجدد تعویض در صورت قفل‌بودن فایل (پیش‌فرض ۳؛ واچر ۳۰)",
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="بررسی دوره‌ای: پاک‌شدن پچ را خودکار ترمیم می‌کند (برای زمان‌بندی)",
+    )
+    parser.add_argument(
+        "--install-task",
+        action="store_true",
+        help="زمان‌بندی ویندوز برای اجرای دوره‌ای --doctor (هر ۱۵ دقیقه)",
+    )
+    parser.add_argument("--remove-task", action="store_true", help="حذف زمان‌بندی دکتر")
+    parser.add_argument(
+        "--log",
+        default=None,
+        help="مسیر فایل لاگ برای --doctor (پیش‌فرض فقط خروجی)",
+    )
     parser.add_argument("--restore", action="store_true", help="بازگردانی پشتیبان (ZCode بسته باشد)")
     parser.add_argument("--status", action="store_true", help="گزارش وضعیت")
     args = parser.parse_args()
@@ -532,6 +682,10 @@ def main() -> int:
     if not asar.is_file():
         raise SystemExit(f"asar پیدا نشد: {asar}")
 
+    if args.install_task:
+        return install_task(Path(args.log) if args.log else DEFAULT_LOG)
+    if args.remove_task:
+        return remove_task()
     if args.status:
         return status(asar)
     if args.prepare:
@@ -540,6 +694,13 @@ def main() -> int:
         return apply(asar, force=args.force, retries=args.retries)
     if args.apply_when_closed:
         return apply_when_closed(asar, relaunch=args.relaunch, poll_seconds=args.poll_interval)
+    if args.doctor:
+        return doctor(
+            asar,
+            Path(args.log) if args.log else None,
+            force=args.force,
+            poll_seconds=args.poll_interval,
+        )
     if args.restore:
         return restore(asar, force=args.force)
     parser.print_help()

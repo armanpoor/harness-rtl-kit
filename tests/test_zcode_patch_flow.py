@@ -188,6 +188,22 @@ try:
     else:
         print("SKIP: phase 9 needs Windows (real file lock via CreateFileW)")
     locker_src.unlink(missing_ok=True)
+
+    # --- فاز ۱۰: دکتر — بی‌کاری روی پچ‌شده، آماده+اعمال روی بی‌پچ ---
+    # (چرخهٔ خودکار پس از آپدیت اپ: همان که --install-task هر ۱۵ دقیقه اجرا می‌کند)
+    doctor_log = WORK / "doctor.log"
+    r = run(["--doctor", "--force", "--log", str(doctor_log)])
+    check("doctor is a no-op on patched asar",
+          "از قبل پچ‌شده" in r.stdout and MARKER in ASAR.read_bytes())
+    check("doctor left no stray patched file", not patched.is_file())
+    run(["--restore", "--force"])
+    r = run(["--doctor", "--force", "--log", str(doctor_log)])
+    check("doctor prepared and applied on unpatched asar", MARKER in ASAR.read_bytes())
+    check("doctor consumed its patched file", not patched.is_file())
+    log_text = doctor_log.read_text(encoding="utf-8")
+    check("doctor log records the apply",
+          "اعمال پچ" in log_text or "پچ اعمال شد" in log_text)
+    check("doctor lock cleaned up", not Path(str(ASAR) + ".doctor-lock").is_file())
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 
