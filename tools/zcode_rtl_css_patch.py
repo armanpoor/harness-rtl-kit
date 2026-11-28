@@ -21,10 +21,12 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
                 بلافاصله دوباره باز می‌شود)
     --doctor    حالت «دکتر» برای زمان‌بندی دوره‌ای: اگر asar پچ‌شده است کاری
                 نمی‌کند؛ اگر آپدیتِ اپ پچ را پاک کرده، خودش prepare می‌کند و
-                در نخستین بستنِ اپ اعمال و اپ را دوباره باز می‌کند. با
+                در نخستین تیکِ بعد از بستنِ اپ اعمال می‌کند (اگر اپ همین تازه
+                بسته شده باشد، دوباره هم بازش می‌کند). تیک‌ها کوتاه می‌مانند و
+                تشخیصِ حالت پایدار با امضای فایل تقریباً رایگان است. با
                 --install-task یک‌بار نصب کنید تا همیشه خودکار باشد.
     --install-task   ساخت زمان‌بندی ویندوز برای اجرای دوره‌ای --doctor
-                (هر ۱۵ دقیقه، بدون پنجره، با pythonw)
+                (هر ۱ دقیقه، بدون پنجره، با pythonw)
     --remove-task    حذف همان زمان‌بندی
     --restore   بازگرداندن پشتیبان (ZCode باید بسته باشد)
     --status    گزارش وضعیت فایل‌ها (شامل پچ‌بودن یا نبودن asar فعلی)
@@ -50,6 +52,7 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -57,6 +60,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+# زیر pythonw هیچ کنسولی وجود ندارد؛ هر فرزندِ کنسولی (tasklist، cmd، schtasks)
+# وگرنه برای خودش پنجرهٔ سیاهِ چشمک‌زن می‌سازد (گزارش ۲۰۲۶-۱۱-۲۸).
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # خروجی فارسی روی کنسول/لولهٔ ویندوز: کدپیج ANSI هرگز نباید print را بشکند
 # (مثلاً در اجرای زمان‌بندی‌شده که stdout به فایل لاگ می‌رود)؛ line_buffering
@@ -160,11 +167,18 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sig_of(path: Path) -> dict:
+    """امضای ارزان فایل برای تشخیص تغییر (بدون خواندن محتوا)."""
+    st = path.stat()
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
 def run(cmd: list[str]) -> None:
-    import os
     if os.name == "nt" and cmd and cmd[0] == "npx":
         cmd = ["cmd", "/c"] + cmd  # npx در ویندوز شیم .cmd است
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, creationflags=CREATE_NO_WINDOW
+    )
     if result.returncode != 0:
         if sys.stderr is not None:  # در pythonw استانداردِ خطا نیست
             sys.stderr.write(result.stdout + result.stderr)
@@ -365,7 +379,8 @@ def inject_css(app_dir: Path) -> list[str]:
 
 def app_running() -> bool:
     probe = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq ZCode.exe"], capture_output=True, text=True
+        ["tasklist", "/FI", "IMAGENAME eq ZCode.exe"],
+        capture_output=True, text=True, creationflags=CREATE_NO_WINDOW,
     )
     return "ZCode.exe" in probe.stdout
 
@@ -518,19 +533,26 @@ def _relaunch_zcode(asar: Path, log) -> None:
         log(f"ZCode.exe در مسیر متعارف نبود؛ دستی باز کنید: {exe}")
 
 
-def doctor(asar: Path, log_path: Path | None, force: bool = False,
-           poll_seconds: int = 10) -> int:
+def doctor(asar: Path, log_path: Path | None, force: bool = False) -> int:
     """حالت «دکتر» برای زمان‌بندی دوره‌ای — چرخهٔ آپدیت اپ را خودکار می‌بندد.
 
-    هر تیک: اگر asar پچ‌شده است، بی‌کار خارج می‌شود. اگر آپدیت خودکار اپ پچ را
-    پاک کرده باشد: prepare می‌کند (در حین اجرای اپ امن است)، اگر اپ باز است
-    منتظر نخستین بستن می‌ماند و همان‌جا apply و بازگشایی می‌کند. قفلِ فایل،
-    نمونه‌های موازی را یکی می‌کند و قفلِ به‌جا مانده از کرش بعد از دو ساعت
-    کهنه می‌شود.
+    هر تیک کوتاه است و هیچ‌وقت منتظر نمی‌ماند:
+    - اگر asar پچ‌شده است (تشخیص ارزان با امضای size+mtime در فایل وضعیت)،
+      بی‌هزینه خارج می‌شود.
+    - اگر آپدیت اپ پچ را پاک کرده باشد: prepare می‌کند (در حین اجرای اپ امن
+      است) و تیک‌های بعدی منتظر بسته‌شدن اپ می‌مانند؛ در نخستین تیکِ پس از
+      بستن، apply می‌شود. اگر اپ همین تازه بسته شده باشد دوباره بازش می‌کند؛
+      اگر از قبل بسته بوده، بی‌سروصدا اعمال می‌کند تا در باز شدنِ بعدیِ خودِ
+      کاربر پچ‌شده بالا بیاید.
+    - اگر آپدیت‌کننده همین لحظه در حال نوشتن asar باشد، به تیک بعدی می‌سپارد؛
+      فایل پچ‌شدهٔ ناقص (pack نیمه‌کاره) حذف و بازسازی می‌شود.
+    قفلِ فایل، نمونه‌های موازی را یکی می‌کند و قفلِ به‌جا مانده از کرش بعد از
+    دو ساعت کهنه می‌شود.
     """
     def log(msg: str) -> None:
         _doctor_log(msg, log_path)
 
+    state_path = (log_path or DEFAULT_LOG).with_suffix(".state.json")
     patched = asar.with_suffix(asar.suffix + PATCHED_SUFFIX)
     lock = asar.with_suffix(asar.suffix + DOCTOR_LOCK_SUFFIX)
     got_lock = False
@@ -543,48 +565,89 @@ def doctor(asar: Path, log_path: Path | None, force: bool = False,
             break
         except FileExistsError:
             if time.time() - lock.stat().st_mtime < DOCTOR_LOCK_MAX_AGE:
-                log("نمونهٔ دیگری از دکتر در جریان است؛ خروج.")
-                return 0
+                return 0  # تیک موازی؛ بی‌سروصدا (لاگ هر دقیقه بی‌معناست)
             log("قفلِ کهنه و بی‌صاحب پاک شد؛ ادامه.")
             lock.unlink(missing_ok=True)
     if not got_lock:
         log("قفلِ doctor آزاد نشد؛ خروج.")
         return 1
 
+    def save_state(st: dict) -> None:
+        try:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+        except OSError:
+            pass
+
     try:
-        if is_patched(asar):
-            log("asar از قبل پچ‌شده است؛ کاری نیست.")
+        st = {}
+        try:
+            st = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        now = time.time()
+        sig = _sig_of(asar)
+
+        if sig == st.get("patched_sig"):
+            # حالت پایدار؛ فقط ضربان ساعتی برای اطمینانِ زنده‌بودن
+            if now - st.get("heartbeat_ts", 0) > 3600:
+                log("وضعیت سالم: asar پچ‌شده است.")
+                st["heartbeat_ts"] = now
+                save_state(st)
             return 0
-        # اگر آپدیت‌کننده همین لحظه در حال نوشتن asar باشد، به تیک بعدی می‌سپاریم
-        size_before = asar.stat().st_size
-        time.sleep(3)
-        if asar.stat().st_size != size_before:
-            log("asar در حال تغییر است (آپدیت در جریان)؛ تیک بعدی بررسی می‌کند.")
-            return 0
-        if not patched.is_file() or patched.stat().st_mtime < asar.stat().st_mtime:
-            log("asar بی‌پچ است (آپدیت اپ پچ را پاک کرده)؛ ساخت نسخهٔ پچ‌شده ...")
-            prepare(asar)
-        if not is_patched(patched):
-            # فایل ناقص (مثلاً pack نیمه‌کاره پس از قطع فرایند): بازسازی
-            log("فایل پچ‌شده نشان پچ را ندارد؛ حذف و ساخت دوباره ...")
-            patched.unlink(missing_ok=True)
-            prepare(asar)
+
+        if running := app_running():
+            st["last_seen_running_ts"] = now
+
+        if sig != st.get("unpatched_sig"):
+            # چهرهٔ ناشناخته: آپدیت تازه یا نخستین اجرا — بررسی کامل
+            if is_patched(asar):
+                st["patched_sig"] = sig
+                save_state(st)
+                log("asar پچ‌شده است (امضا ثبت شد).")
+                return 0
+            # اگر آپدیت‌کننده همین لحظه در حال نوشتن asar باشد، به تیک بعدی می‌سپاریم
+            time.sleep(3)
+            if _sig_of(asar) != sig:
+                log("asar در حال تغییر است (آپدیت در جریان)؛ تیک بعدی بررسی می‌کند.")
+                save_state(st)
+                return 0
+            if not patched.is_file() or patched.stat().st_mtime < asar.stat().st_mtime:
+                log("asar بی‌پچ است (آپدیت اپ پچ را پاک کرده)؛ ساخت نسخهٔ پچ‌شده ...")
+                prepare(asar)
             if not is_patched(patched):
-                log("خطا: دوباره بدون نشان؛ تیک بعدی دوباره تلاش می‌کند.")
-                return 1
-        if app_running() and not force:
-            log(f"ZCode باز است؛ منتظر نخستین بستن (بررسی هر {poll_seconds} ثانیه) ...")
-            while True:
-                time.sleep(poll_seconds)
-                if not app_running():
-                    break
-            log("ZCode بسته شد؛ اعمال پچ ...")
+                # فایل ناقص (مثلاً pack نیمه‌کاره پس از قطع فرایند): بازسازی
+                log("فایل پچ‌شده نشان پچ را ندارد؛ حذف و ساخت دوباره ...")
+                patched.unlink(missing_ok=True)
+                prepare(asar)
+                if not is_patched(patched):
+                    log("خطا: دوباره بدون نشان؛ تیک بعدی دوباره تلاش می‌کند.")
+                    save_state(st)
+                    return 1
+            st["unpatched_sig"] = sig
+            save_state(st)
+
+        # asar بی‌پچِ شناخته‌شده و نسخهٔ پچ‌شدهٔ آماده؛ اگر اپ باز است تیک بعدی
+        if running and not force:
+            save_state(st)  # ضربان: به‌روزرسانیِ last_seen_running_ts روی دیسک
+            return 0
+        log("ZCode بسته است؛ اعمال پچ ...")
+        new_sig = _sig_of(patched)  # پس از تعویض، امضای asar همین می‌شود
         code = apply(asar, force=True, retries=30)
         if code == 0:
             log("پچ اعمال شد.")
-            _relaunch_zcode(asar, log)
-        else:
-            log("اعمال پچ ناموفق بود؛ تیک بعدی دوباره تلاش می‌کند.")
+            st["patched_sig"] = new_sig
+            if now - st.get("last_seen_running_ts", 0) < 180:
+                # اپ همین تازه بسته شده (کاربر منتظرِ چرخه است)؛ دوباره بازش کن
+                _relaunch_zcode(asar, log)
+            else:
+                log("در باز شدنِ بعدیِ ZCode، نسخهٔ پچ‌شده بالا می‌آید.")
+            save_state(st)
+            return code
+        log("اعمال پچ ناموفق بود؛ تیک بعدی دوباره تلاش می‌کند.")
+        save_state(st)
         return code
     finally:
         lock.unlink(missing_ok=True)
@@ -602,8 +665,19 @@ def install_task(log_path: Path) -> int:
     parts = [pythonw, script, "--doctor", "--log", log_path]
     tr = " ".join(f'"{p}"' if " " in str(p) else str(p) for p in parts)
     run(["schtasks", "/create", "/tn", TASK_NAME, "/tr", tr,
-         "/sc", "minute", "/mo", "15", "/f"])
-    print(f"زمان‌بندی «{TASK_NAME}» ساخته شد: هر ۱۵ دقیقه (بی‌پنجره، با pythonw).")
+         "/sc", "minute", "/mo", "1", "/f"])
+    # پیش‌فرضِ schtasks: «شروع فقط با برق شهری» — روی لپ‌تاپِ باتری‌ای تسک
+    # هرگز اجرا نمی‌شود و در وضعیت Queued می‌ماند (گزارش ۲۰۲۶-۱۱-۲۸)
+    ps = (
+        "$t = Get-ScheduledTask -TaskName '" + TASK_NAME + "';"
+        "$t.Settings.DisallowStartIfOnBatteries = $false;"
+        "$t.Settings.StopIfGoingOnBatteries = $false;"
+        "$t.Settings.StartWhenAvailable = $true;"
+        "$t | Set-ScheduledTask | Out-Null"
+    )
+    run(["powershell", "-NoProfile", "-Command", ps])
+    print("شرایط باتری/خواب تنظیم شد: روی باتری هم اجرا می‌شود و تیک‌های از دست رفته پس از بیداری جبران می‌شوند.")
+    print(f"زمان‌بندی «{TASK_NAME}» ساخته شد: هر ۱ دقیقه (بی‌پنجره، با pythonw).")
     print(f"حذف: python \"{script}\" --remove-task")
     print(f"لاگ دکتر: {log_path}")
     return 0
@@ -699,7 +773,6 @@ def main() -> int:
             asar,
             Path(args.log) if args.log else None,
             force=args.force,
-            poll_seconds=args.poll_interval,
         )
     if args.restore:
         return restore(asar, force=args.force)
