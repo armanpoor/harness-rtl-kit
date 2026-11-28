@@ -22,7 +22,9 @@ zcode_rtl_css_patch.py — پچ راست‌چین برای رندرر چت ZCode
     --doctor    حالت «دکتر» برای زمان‌بندی دوره‌ای: اگر asar پچ‌شده است کاری
                 نمی‌کند؛ اگر آپدیتِ اپ پچ را پاک کرده، خودش prepare می‌کند و
                 در نخستین تیکِ بعد از بستنِ اپ اعمال می‌کند (اگر اپ همین تازه
-                بسته شده باشد، دوباره هم بازش می‌کند). تیک‌ها کوتاه می‌مانند و
+                بسته شده باشد، دوباره هم بازش می‌کند). اگر کاربر اپ را نبندد،
+                پس از ۱۰ دقیقه انتظار خودش اپ را بااحترام می‌بندد (--no-
+                auto-restart برای خاموش‌کردن این رفتار). تیک‌ها کوتاه می‌مانند و
                 تشخیصِ حالت پایدار با امضای فایل تقریباً رایگان است. با
                 --install-task یک‌بار نصب کنید تا همیشه خودکار باشد.
     --install-task   ساخت زمان‌بندی ویندوز برای اجرای دوره‌ای --doctor
@@ -78,6 +80,7 @@ PATCHED_SUFFIX = ".rtl-patched"
 BACKUP_SUFFIX = ".pre-rtl-backup"
 DOCTOR_LOCK_SUFFIX = ".doctor-lock"
 DOCTOR_LOCK_MAX_AGE = 2 * 3600  # قفلِ بی‌صاحبِ کهنه‌تر از این = به‌جامانده از کرش
+AUTO_RESTART_GRACE = 600  # ثانیه؛ پس از این‌قدر انتظار، دکتر خودش اپ را بااحترام می‌بندد
 TASK_NAME = "HarnessRTLKit-Doctor"
 DEFAULT_LOG = Path.home() / ".harness-rtl-kit" / "rtl-doctor.log"
 CSS_MARKER = "harness-rtl-kit: content-adaptive RTL"
@@ -533,7 +536,22 @@ def _relaunch_zcode(asar: Path, log) -> None:
         log(f"ZCode.exe در مسیر متعارف نبود؛ دستی باز کنید: {exe}")
 
 
-def doctor(asar: Path, log_path: Path | None, force: bool = False) -> int:
+def _graceful_close_app(timeout: float = 25.0) -> bool:
+    """بستنِ بااحترام ZCode (همانند کلیکِ X؛ سشن‌ها ذخیره می‌شوند) و انتظار تا خروج کامل."""
+    subprocess.run(
+        ["taskkill", "/IM", "ZCode.exe"],
+        capture_output=True, text=True, creationflags=CREATE_NO_WINDOW,
+    )
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not app_running():
+            return True
+        time.sleep(2)
+    return False
+
+
+def doctor(asar: Path, log_path: Path | None, force: bool = False,
+           auto_restart: bool = True) -> int:
     """حالت «دکتر» برای زمان‌بندی دوره‌ای — چرخهٔ آپدیت اپ را خودکار می‌بندد.
 
     هر تیک کوتاه است و هیچ‌وقت منتظر نمی‌ماند:
@@ -629,16 +647,31 @@ def doctor(asar: Path, log_path: Path | None, force: bool = False) -> int:
             st["unpatched_sig"] = sig
             save_state(st)
 
-        # asar بی‌پچِ شناخته‌شده و نسخهٔ پچ‌شدهٔ آماده؛ اگر اپ باز است تیک بعدی
+        # asar بی‌پچِ شناخته‌شده و نسخهٔ پچ‌شدهٔ آماده
         if running and not force:
-            save_state(st)  # ضربان: به‌روزرسانیِ last_seen_running_ts روی دیسک
-            return 0
+            st.setdefault("unpatched_first_seen_ts", now)
+            if auto_restart and now - st["unpatched_first_seen_ts"] >= AUTO_RESTART_GRACE:
+                # کاربر فرصتِ بستنِ دستی را داشته؛ حالا خودمان بااحترام می‌بندیم
+                log("بیش از ۱۰ دقیقه است اپ با asar بی‌پچ باز است؛ بستنِ بااحترامِ خودکار ...")
+                if _graceful_close_app():
+                    log("ZCode بسته شد؛ اعمال پچ ...")
+                else:
+                    log("اپ بسته نشد؛ تیک بعدی دوباره تلاش می‌کند.")
+                    save_state(st)
+                    return 0
+            else:
+                save_state(st)  # ضربان: به‌روزرسانیِ last_seen_running_ts روی دیسک
+                return 0
+        else:
+            log("ZCode بسته است؛ اعمال پچ ...")
+        save_state(st)
         log("ZCode بسته است؛ اعمال پچ ...")
         new_sig = _sig_of(patched)  # پس از تعویض، امضای asar همین می‌شود
         code = apply(asar, force=True, retries=30)
         if code == 0:
             log("پچ اعمال شد.")
             st["patched_sig"] = new_sig
+            st.pop("unpatched_first_seen_ts", None)
             if now - st.get("last_seen_running_ts", 0) < 180:
                 # اپ همین تازه بسته شده (کاربر منتظرِ چرخه است)؛ دوباره بازش کن
                 _relaunch_zcode(asar, log)
@@ -738,6 +771,11 @@ def main() -> int:
         help="بررسی دوره‌ای: پاک‌شدن پچ را خودکار ترمیم می‌کند (برای زمان‌بندی)",
     )
     parser.add_argument(
+        "--no-auto-restart",
+        action="store_true",
+        help="دکتر خودش اپ را برای اعمال پچ نبندد؛ فقط منتظر بستنِ دستی بماند",
+    )
+    parser.add_argument(
         "--install-task",
         action="store_true",
         help="زمان‌بندی ویندوز برای اجرای دوره‌ای --doctor (هر ۱۵ دقیقه)",
@@ -773,6 +811,7 @@ def main() -> int:
             asar,
             Path(args.log) if args.log else None,
             force=args.force,
+            auto_restart=not args.no_auto_restart,
         )
     if args.restore:
         return restore(asar, force=args.force)

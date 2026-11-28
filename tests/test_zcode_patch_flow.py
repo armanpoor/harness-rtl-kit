@@ -7,6 +7,7 @@
 در محیط بدون npx با ملایمت رد می‌شود (SKIP).
 """
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -208,6 +209,23 @@ try:
           "وضعیت سالم" in r.stdout and MARKER in ASAR.read_bytes())
     check("doctor wrote state file", Path(str(doctor_log) + ".state.json").is_file()
           or Path(str(doctor_log.with_suffix(".state.json"))).is_file())
+
+    # --- فاز ۱۱: گریسِ بازآغاز خودکار — با first_seen تازه نباید اپ را ببندد ---
+    run(["--restore", "--force"])
+    state_path = doctor_log.with_suffix(".state.json")
+    stat_now = ASAR.stat()
+    state_path.write_text(
+        json.dumps({
+            "unpatched_sig": {"size": stat_now.st_size, "mtime_ns": stat_now.st_mtime_ns},
+            "unpatched_first_seen_ts": time.time(),  # گریس تازه: هنوز نباید مداخله کند
+            "last_seen_running_ts": time.time(),
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    r = run(["--doctor", "--log", str(doctor_log)])  # بدون force: اپ واقعی باز است
+    check("doctor waits during grace period (no apply, no restart)",
+          MARKER not in ASAR.read_bytes() and "بستنِ بااحترام" not in r.stdout)
+    state_path.unlink(missing_ok=True)
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 
