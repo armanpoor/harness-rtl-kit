@@ -537,7 +537,8 @@ def _relaunch_zcode(asar: Path, log) -> None:
 
 
 def _graceful_close_app(timeout: float = 25.0) -> bool:
-    """بستنِ بااحترام ZCode (همانند کلیکِ X؛ سشن‌ها ذخیره می‌شوند) و انتظار تا خروج کامل."""
+    """بستنِ بااحترام ZCode (WM_CLOSE = مثل کلیکِ X) و در صورت بی‌اعتنایی (حالت
+    trey) خروجِ قطعی با taskkill /F — سشن‌ها در هر دو حالت ذخیره می‌مانند."""
     subprocess.run(
         ["taskkill", "/IM", "ZCode.exe"],
         capture_output=True, text=True, creationflags=CREATE_NO_WINDOW,
@@ -547,6 +548,15 @@ def _graceful_close_app(timeout: float = 25.0) -> bool:
         if not app_running():
             return True
         time.sleep(2)
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/IM", "ZCode.exe"],
+        capture_output=True, text=True, creationflags=CREATE_NO_WINDOW,
+    )
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not app_running():
+            return True
+        time.sleep(1)
     return False
 
 
@@ -687,7 +697,12 @@ def doctor(asar: Path, log_path: Path | None, force: bool = False,
 
 
 def install_task(log_path: Path) -> int:
-    """زمان‌بندی ویندوز: اجرای دوره‌ای --doctor با pythonw، بدون پنجره."""
+    """زمان‌بندی ویندوز: اجرای دوره‌ای --doctor با pythonw، بدون پنجره.
+
+    با ماژول ScheduledTask ساخته می‌شود نه schtasks — چون schtasks برای
+    ترایگرِ minute یک «مدت تکرار» محدود می‌گذارد و پس از یکی دو ساعت تسک
+    برای همیشه دیگر آتش نمی‌گیرد (گزارش ۲۰۲۶-۱۱-۲۸ تا ۲۰:۵۲ و تمام).
+    """
     if os.name != "nt":
         raise SystemExit("زمان‌بندی فقط روی ویندوز است؛ در بقیهٔ سیستم‌ها cron بچینید.")
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -695,22 +710,22 @@ def install_task(log_path: Path) -> int:
         pythonw = Path(sys.executable)
     script = Path(__file__).resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    parts = [pythonw, script, "--doctor", "--log", log_path]
-    tr = " ".join(f'"{p}"' if " " in str(p) else str(p) for p in parts)
-    run(["schtasks", "/create", "/tn", TASK_NAME, "/tr", tr,
-         "/sc", "minute", "/mo", "1", "/f"])
-    # پیش‌فرضِ schtasks: «شروع فقط با برق شهری» — روی لپ‌تاپِ باتری‌ای تسک
-    # هرگز اجرا نمی‌شود و در وضعیت Queued می‌ماند (گزارش ۲۰۲۶-۱۱-۲۸)
     ps = (
-        "$t = Get-ScheduledTask -TaskName '" + TASK_NAME + "';"
-        "$t.Settings.DisallowStartIfOnBatteries = $false;"
-        "$t.Settings.StopIfGoingOnBatteries = $false;"
-        "$t.Settings.StartWhenAvailable = $true;"
-        "$t | Set-ScheduledTask | Out-Null"
+        "$a = New-ScheduledTaskAction -Execute '" + str(pythonw) + "' "
+        "-Argument '" + str(script) + " --doctor --log " + str(log_path) + "';"
+        "$t = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(10) "
+        "-RepetitionInterval (New-TimeSpan -Minutes 1) "
+        "-RepetitionDuration (New-TimeSpan -Days 3650);"
+        "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
+        "-DontStopIfGoingOnBatteries -StartWhenAvailable "
+        "-ExecutionTimeLimit (New-TimeSpan -Hours 2) "
+        "-MultipleInstances IgnoreNew;"
+        "Register-ScheduledTask -TaskName '" + TASK_NAME + "' "
+        "-Action $a -Trigger $t -Settings $s -Force | Out-Null"
     )
     run(["powershell", "-NoProfile", "-Command", ps])
-    print("شرایط باتری/خواب تنظیم شد: روی باتری هم اجرا می‌شود و تیک‌های از دست رفته پس از بیداری جبران می‌شوند.")
-    print(f"زمان‌بندی «{TASK_NAME}» ساخته شد: هر ۱ دقیقه (بی‌پنجره، با pythonw).")
+    print(f"زمان‌بندی «{TASK_NAME}» ساخته شد: هر ۱ دقیقه، بی‌پنجره، تکرارِ نامحدود،")
+    print("روی باتری هم اجرا می‌شود و تیک‌های از دست رفته پس از خواب جبران می‌شود.")
     print(f"حذف: python \"{script}\" --remove-task")
     print(f"لاگ دکتر: {log_path}")
     return 0
